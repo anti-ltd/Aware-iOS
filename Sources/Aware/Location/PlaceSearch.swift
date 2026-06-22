@@ -60,7 +60,13 @@ final class PlaceSearch {
         isSearching = true
         defer { if token == searchToken { isSearching = false } }
 
+        // Seed with the pins already on screen so they stay put while the new
+        // region's batches stream in, instead of blinking out on the first
+        // publish (which started from empty). Stale pins outside the new region
+        // are pruned once at the end, when the map is settled — not mid-pan.
         var merged: [String: FoundPlace] = [:]
+        for p in places { merged[Self.placeKey(p)] = p }
+        var fresh = Set<String>()
         let batchSize = 4
         for start in stride(from: 0, to: cells.count, by: batchSize) {
             guard token == searchToken else { return }  // superseded mid-flight
@@ -89,13 +95,22 @@ final class PlaceSearch {
             }
             for place in found {
                 // Dedupe across overlapping cells by name + rounded coordinate.
-                let key = "\(place.name)@\(Int(place.coordinate.latitude * 1e4))," +
-                          "\(Int(place.coordinate.longitude * 1e4))"
+                let key = Self.placeKey(place)
                 merged[key] = place
+                fresh.insert(key)
             }
             guard token == searchToken else { return }
             places = Array(merged.values)   // stream pins in batch-by-batch
         }
+        // All batches landed: drop the seeded pins that this region didn't
+        // re-find (anything outside the new viewport) in one settled update.
+        guard token == searchToken else { return }
+        places = merged.filter { fresh.contains($0.key) }.map(\.value)
+    }
+
+    /// Dedupe key: name + coordinate rounded to ~10 m.
+    private static func placeKey(_ p: FoundPlace) -> String {
+        "\(p.name)@\(Int(p.coordinate.latitude * 1e4)),\(Int(p.coordinate.longitude * 1e4))"
     }
 
     /// Even grid of cell centres covering a square `2*radius` wide around `center`.

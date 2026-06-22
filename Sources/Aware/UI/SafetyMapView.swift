@@ -11,81 +11,62 @@ struct SafetyMapView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(RoutePlanner.self) private var planner
 
-    @State private var camera: MapCameraPosition = .automatic
     @State private var selected: Set<ServiceCategory> = [.police, .hospital]
     @State private var search = PlaceSearch()
     @State private var crime = CrimeService()
     @State private var region: MKCoordinateRegion?
-    @State private var heat: [HeatCell] = []
+    /// The rendered crime heat raster (nil when the heatmap is off or empty).
+    @State private var heatImage: HeatImage?
+    @State private var heatVersion = 0
+    /// The region the heat raster + POI search were last rebuilt for. Used to skip
+    /// the re-render/re-search churn on tiny camera settles (mirrors the gate in
+    /// `CrimeService.load`).
+    @State private var lastGridRegion: MKCoordinateRegion?
+    /// Imperative camera moves (recenter, frame a route) + their monotonic id.
+    @State private var mapCommand: MapCommand?
+    @State private var commandSeq = 0
+    /// Whether the initial recenter-on-user has happened yet.
+    @State private var didCenter = false
+    /// Tapped-area crime detail (drives the insights sheet).
+    @State private var insight: AreaInsight?
 
     var body: some View {
         @Bindable var settings = settings
         NavigationStack {
-            MapReader { proxy in
-            Map(position: $camera) {
-                UserAnnotation()
-
-                if settings.showCrimeHeatmap {
-                    // Crime aggregated into a zoom-scaled grid: one disc per cell,
-                    // coloured by how its count compares to the busiest cell in
-                    // view (faint amber → solid red). Hotspots pop; quiet areas
-                    // stay see-through; far fewer overlays than one-disc-per-crime.
-                    ForEach(heat) { cell in
-                        MapCircle(center: cell.coordinate, radius: cell.radius)
-                            .foregroundStyle(Self.heatColor(cell.intensity))
-                            .mapOverlayLevel(level: .aboveRoads)
-                    }
-                }
-
-                ForEach(search.places) { place in
-                    Marker(place.name, systemImage: place.category.symbol,
-                           coordinate: place.coordinate)
-                        .tint(place.category.tint)
-                }
-
-                // Computed routes: alternates faint, the chosen one bold accent.
-                ForEach(Array(planner.routes.enumerated()), id: \.offset) { _, r in
-                    let isSel = r == planner.selected
-                    MapPolyline(r.polyline)
-                        .stroke(isSel ? Color.accentColor : .secondary.opacity(0.5),
-                                style: StrokeStyle(lineWidth: isSel ? 7 : 4,
-                                                   lineCap: .round, lineJoin: .round))
-                }
-                if let dest = planner.destination {
-                    Marker(planner.destinationName ?? "Destination",
-                           systemImage: "flag.fill", coordinate: dest)
-                        .tint(Color.accentColor)
-                }
-            }
-            .mapStyle(.standard(pointsOfInterest: .excludingAll))
-            .ignoresSafeArea(edges: .bottom)
-            // Long-press anywhere on the map → route there. The sequenced
-            // drag reads the touch location so we can convert it to a coordinate.
-            .gesture(
-                LongPressGesture(minimumDuration: 0.4)
-                    .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
-                    .onEnded { value in
-                        if case .second(true, let drag?) = value,
-                           let coord = proxy.convert(drag.location, from: .local) {
-                            routeTo(coord)
-                        }
-                    }
-            )
+            SafetyMapKitView(
+                heat: settings.showCrimeHeatmap ? heatImage : nil,
+                places: search.places,
+                routes: planner.routes,
+                selectedRoute: planner.selected,
+                dangerRoutes: planner.dangerRoutes(),
+                destination: planner.destination,
+                destinationName: planner.destinationName,
+                showsUserLocation: true,
+                command: mapCommand,
+                onRegionChange: handleRegionChange,
+                onLongPress: routeTo,
+                onTap: showInsights)
+            // Fill the whole screen so the nav bar + filter chips float over the
+            // map as translucent glass (SwiftUI Map did this implicitly; the
+            // MKMapView bridge needs it spelled out).
+            .ignoresSafeArea()
             .safeAreaInset(edge: .top) { categoryBar }
-            .safeAreaInset(edge: .bottom) { heatmapToggle }
-            .onMapCameraChange(frequency: .onEnd) { ctx in
-                region = ctx.region
-                Task { await runSearch() }
-                if settings.showCrimeHeatmap {
-                    rebuildHeat()   // re-grid at the new zoom
-                    Task { await crime.load(region: ctx.region) }
-                }
-            }
+            .safeAreaInset(edge: .bottom) { bottomControls }
             .task(id: selected) { await runSearch() }
             .task(id: settings.showCrimeHeatmap) {
-                if settings.showCrimeHeatmap, let region {
-                    await crime.load(region: region)
+                if settings.showCrimeHeatmap {
+                    if let region { await crime.load(region: region) }
+                    rebuildHeatImage()
+                } else {
+                    heatImage = nil
                 }
+            }
+            // Recenter on the user the first time we get a location fix.
+            .onChange(of: model.location.location?.coordinate.latitude) { _, _ in
+                guard !didCenter, let loc = model.location.location?.coordinate else { return }
+                didCenter = true
+                moveCamera(to: MKCoordinateRegion(center: loc,
+                    latitudinalMeters: 1_500, longitudinalMeters: 1_500))
             }
             .overlay(alignment: .top) {
                 if search.isSearching || crime.isLoading {
@@ -115,7 +96,7 @@ struct SafetyMapView: View {
             // Re-grid the heatmap + re-pick the safer route whenever fresh crime
             // data lands.
             .task(id: crimeSignature) {
-                rebuildHeat()
+                rebuildHeatImage()
                 if !planner.routes.isEmpty {
                     planner.choose(preferSafer: settings.preferSaferRoutes, crime: crime.points)
                 }
@@ -137,46 +118,88 @@ struct SafetyMapView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         model.location.requestOneShot()
-                        camera = .userLocation(fallback: .automatic)
+                        if let loc = model.location.location?.coordinate {
+                            moveCamera(to: MKCoordinateRegion(center: loc,
+                                latitudinalMeters: 1_500, longitudinalMeters: 1_500))
+                        }
                     } label: {
                         Image(systemName: "location.fill")
                     }
                 }
             }
-            } // MapReader
+            .sheet(item: $insight) { item in
+                AreaInsightSheet(insight: item) { routeTo($0) }
+            }
+            .onAppear { model.location.requestOneShot() }
         }
     }
 
-    /// Aggregate crime points into a zoom-scaled grid. One disc per occupied
-    /// cell, intensity = cell count vs the busiest cell in view. Cheap, and reads
-    /// as a real heatmap instead of a flat red wall.
-    private func rebuildHeat() {
-        guard let region, !crime.points.isEmpty else { heat = []; return }
-        // ~22 cells across the longer visible axis, so the grid tracks zoom.
-        let cellDeg = max(region.span.latitudeDelta, region.span.longitudeDelta) / 22
-        guard cellDeg > 0 else { heat = []; return }
+    /// Re-render the crime heat raster for the current region + loaded crime set.
+    /// Cheap (low-res KDE, gated to camera settles) and produces a real smooth
+    /// heat field via `CrimeHeat.render`, not a grid of discs.
+    private func rebuildHeatImage() {
+        guard settings.showCrimeHeatmap, let region else { heatImage = nil; return }
+        heatVersion += 1
+        heatImage = CrimeHeat.render(points: crime.points, region: region, version: heatVersion)
+    }
 
-        var buckets: [GridKey: Int] = [:]
-        for p in crime.points {
-            let key = GridKey(x: Int((p.coordinate.latitude / cellDeg).rounded(.down)),
-                              y: Int((p.coordinate.longitude / cellDeg).rounded(.down)))
-            buckets[key, default: 0] += 1
-        }
-        let maxCount = max(buckets.values.max() ?? 1, 1)
-        let radius = cellDeg * 111_000 * 0.62   // slight overlap smooths the field
-        heat = buckets.map { key, count in
-            HeatCell(coordinate: CLLocationCoordinate2D(latitude: (Double(key.x) + 0.5) * cellDeg,
-                                                        longitude: (Double(key.y) + 0.5) * cellDeg),
-                     intensity: min(1, Double(count) / Double(maxCount)),
-                     radius: radius)
+    /// Camera-settle handler from the map view. Reports the region, then — gated
+    /// to skip micro-settles — re-runs the POI search, re-renders the heat, and
+    /// refetches crime for the new viewport.
+    private func handleRegionChange(_ r: MKCoordinateRegion) {
+        region = r
+        guard Self.regionMovedEnough(from: lastGridRegion, to: r) else { return }
+        lastGridRegion = r
+        Task { await runSearch() }
+        if settings.showCrimeHeatmap {
+            rebuildHeatImage()
+            Task { await crime.load(region: r) }
         }
     }
 
-    /// Amber (quiet) → red (hotspot), opacity rising with intensity. Capped below
-    /// fully opaque so street labels still read through the busiest cells.
-    static func heatColor(_ t: Double) -> Color {
-        Color(hue: (1 - t) * 0.13, saturation: 0.9, brightness: 1.0)
-            .opacity(0.20 + 0.32 * t)
+    /// Issue an imperative camera move (recenter / frame a route).
+    private func moveCamera(to region: MKCoordinateRegion) {
+        commandSeq += 1
+        mapCommand = MapCommand(region: region, id: commandSeq)
+    }
+
+    /// Tap-on-map handler: summarise reported crime around the tapped point into
+    /// the insights sheet. Radius scales with zoom (a slice of the view height).
+    private func showInsights(_ coord: CLLocationCoordinate2D) {
+        guard !crime.points.isEmpty else { return }
+        let viewMeters = (region?.span.latitudeDelta ?? 0.05) * 111_000
+        let radius = min(1_500, max(150, viewMeters * 0.12))
+        let here = CLLocation(latitude: coord.latitude, longitude: coord.longitude)
+        let near = crime.points.filter {
+            here.distance(from: CLLocation(latitude: $0.coordinate.latitude,
+                                           longitude: $0.coordinate.longitude)) <= radius
+        }
+        var counts: [String: Int] = [:]
+        for c in near { counts[Self.prettyCategory(c.category), default: 0] += 1 }
+        let breakdown = counts.sorted { $0.value > $1.value }
+            .map { CategoryCount(name: $0.key, count: $0.value) }
+        insight = AreaInsight(coordinate: coord, radiusMeters: radius,
+                              total: near.count, breakdown: breakdown,
+                              source: crime.sourceName)
+    }
+
+    /// Humanise a raw provider category code ("anti-social-behaviour" → "Anti
+    /// Social Behaviour").
+    private static func prettyCategory(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "-", with: " ")
+            .replacingOccurrences(of: "_", with: " ")
+            .capitalized
+    }
+
+    /// True if the camera moved/zoomed enough to be worth re-searching + re-gridding
+    /// — mirrors `CrimeService.load`'s 500 m / 25 %-span gate so a settle that
+    /// skips the fetch also skips the (otherwise pointless) re-grid.
+    private static func regionMovedEnough(from last: MKCoordinateRegion?, to now: MKCoordinateRegion) -> Bool {
+        guard let last else { return true }
+        let moved = CLLocation(latitude: last.center.latitude, longitude: last.center.longitude)
+            .distance(from: CLLocation(latitude: now.center.latitude, longitude: now.center.longitude))
+        let zoomed = abs(last.span.latitudeDelta - now.span.latitudeDelta) >= now.span.latitudeDelta * 0.25
+        return moved >= 500 || zoomed
     }
 
     /// Changes when the loaded crime set changes — drives the safer-route re-pick.
@@ -202,34 +225,34 @@ struct SafetyMapView: View {
                 let span = MKCoordinateSpan(
                     latitudeDelta: abs(from.latitude - dest.latitude) * 1.8 + 0.01,
                     longitudeDelta: abs(from.longitude - dest.longitude) * 1.8 + 0.01)
-                withAnimation { camera = .region(MKCoordinateRegion(center: mid, span: span)) }
+                moveCamera(to: MKCoordinateRegion(center: mid, span: span))
             }
         }
     }
 
     @ViewBuilder private var routeCard: some View {
-        VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if planner.isRouting {
                 HStack(spacing: 8) { ProgressView(); Text("Finding safer route…") }
                     .font(.subheadline)
-            } else if let route = planner.selected {
-                HStack(spacing: 12) {
-                    Image(systemName: "figure.walk")
-                        .font(.title3).foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(routeSummary(route)).font(.headline)
-                        if let reason = planner.reason {
-                            Text(reason).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
+            } else if !planner.routes.isEmpty {
+                HStack(spacing: 10) {
+                    Image(systemName: "figure.walk").font(.title3).foregroundStyle(.tint)
+                    Text(planner.routes.count > 1 ? "Walking routes" : "Walking route")
+                        .font(.headline)
                     Spacer()
-                    Button {
-                        planner.clear()
-                    } label: {
+                    Button { planner.clear() } label: {
                         Image(systemName: "xmark.circle.fill")
                             .font(.title2).foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
+                }
+                // One row per route, each with its safety rating; tap to pick.
+                ForEach(Array(planner.routes.enumerated()), id: \.offset) { _, route in
+                    routeRow(route)
+                }
+                if let reason = planner.reason {
+                    Text(reason).font(.caption).foregroundStyle(.secondary)
                 }
             } else if let err = planner.errorText {
                 HStack(spacing: 8) {
@@ -243,6 +266,74 @@ struct SafetyMapView: View {
         .padding(14)
         .glassCard(shadow: true)
         .padding(.horizontal, UX.screenPadding)
+    }
+
+    /// A single selectable route row: pick indicator, time/distance, safety badge.
+    private func routeRow(_ route: MKRoute) -> some View {
+        let isSelected = route === planner.selected
+        let rating = planner.rating(for: route, crime: crime.points)
+        return Button {
+            planner.select(route)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .font(.body)
+                    .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                Text(routeSummary(route))
+                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
+                Spacer()
+                SafetyBadge(rating: rating)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Safety rating for the ring around the user's current location, or nil when
+    /// we don't have a fix or any crime data to judge by.
+    private var myAreaRating: SafetyRating? {
+        guard let loc = model.location.location?.coordinate, !crime.points.isEmpty else { return nil }
+        let here = CLLocation(latitude: loc.latitude, longitude: loc.longitude)
+        let radius = 400.0
+        let n = crime.points.filter {
+            here.distance(from: CLLocation(latitude: $0.coordinate.latitude,
+                                           longitude: $0.coordinate.longitude)) <= radius
+        }.count
+        return .forArea(crimeCount: n)
+    }
+
+    /// Bottom control row: the heatmap toggle and the current-area safety rating
+    /// sit on the same line.
+    private var bottomControls: some View {
+        HStack(spacing: 8) {
+            heatmapToggle
+            areaRatingButton
+        }
+        .padding(.bottom, 8)
+    }
+
+    /// Current-area safety rating as a pill, styled to match the heatmap toggle.
+    /// Tapping it opens the insights sheet centred on the user's location.
+    @ViewBuilder private var areaRatingButton: some View {
+        if let rating = myAreaRating, let loc = model.location.location?.coordinate {
+            Button {
+                showInsights(loc)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: rating.symbol)
+                    Text("Your area").fontWeight(.semibold)
+                    Text(rating.label).fontWeight(.bold)
+                }
+                .font(.subheadline)
+                .foregroundStyle(rating.color)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                .background { Capsule().fill(.regularMaterial) }
+                .overlay { Capsule().strokeBorder(rating.color.opacity(0.8), lineWidth: 1.5) }
+                .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private func routeSummary(_ route: MKRoute) -> String {
@@ -324,20 +415,8 @@ struct SafetyMapView: View {
             .shadow(color: .black.opacity(0.35), radius: 6, y: 2)
         }
         .buttonStyle(.plain)
-        .padding(.bottom, 8)
     }
 }
-
-/// One aggregated heatmap cell.
-private struct HeatCell: Identifiable {
-    let id = UUID()
-    let coordinate: CLLocationCoordinate2D
-    let intensity: Double      // 0…1 relative to the busiest visible cell
-    let radius: CLLocationDistance
-}
-
-/// Integer grid coordinate used to bucket crimes during aggregation.
-private struct GridKey: Hashable { let x: Int; let y: Int }
 
 /// Nearby-service categories surfaced on the safety map. Mirrors the proposal's
 /// list of "explore nearby" places.

@@ -40,7 +40,8 @@ final class CrimeService {
     /// the visible area.
     private(set) var sourceName: String?
 
-    private let providers: [CrimeProvider] = [UKPoliceProvider()] + SocrataProvider.cities
+    private let providers: [CrimeProvider] =
+        [UKPoliceProvider()] + SocrataProvider.cities + ArcGISProvider.cities
 
     private var lastCenter: CLLocationCoordinate2D?
     private var lastSpan: CLLocationDegrees = 0
@@ -190,9 +191,12 @@ private struct SocrataProvider: CrimeProvider {
         let maxLng = min(region.maxLng, max(nw.longitude, se.longitude))
         guard minLat < maxLat, minLng < maxLng else { return [] }
 
+        // Cast to ::number so the `between` works even when a portal stores
+        // lat/lng as text columns (e.g. Montgomery County). No-op on numeric
+        // columns (Chicago/NYC/SF/LA), so safe for every city.
         let whereClause = """
-        \(latField) between \(minLat) and \(maxLat) \
-        AND \(lngField) between \(minLng) and \(maxLng)
+        \(latField)::number between \(minLat) and \(maxLat) \
+        AND \(lngField)::number between \(minLng) and \(maxLng)
         """
 
         var comps = URLComponents(string: "https://\(host)/resource/\(resource).json")!
@@ -235,7 +239,93 @@ private struct SocrataProvider: CrimeProvider {
                         resource: "2nrs-mtv8", latField: "lat", lngField: "lon",
                         idField: "dr_no", categoryField: "crm_cd_desc", idPrefix: "la",
                         bounds: mapRect(minLat: 33.70, maxLat: 34.34, minLng: -118.67, maxLng: -118.15)),
+        // Maryland — Montgomery County (dataMontgomery)
+        SocrataProvider(name: "Montgomery County, MD", host: "data.montgomerycountymd.gov",
+                        resource: "icn6-v9z3", latField: "latitude", lngField: "longitude",
+                        idField: "incident_id", categoryField: "crimename2", idPrefix: "moco",
+                        bounds: mapRect(minLat: 38.93, maxLat: 39.35, minLng: -77.53, maxLng: -76.88)),
+        // Maryland — Prince George's County
+        SocrataProvider(name: "Prince George's County, MD", host: "data.princegeorgescountymd.gov",
+                        resource: "xjru-idbe", latField: "latitude", lngField: "longitude",
+                        idField: "incident_case_id", categoryField: "clearance_code_inc_type", idPrefix: "pgc",
+                        bounds: mapRect(minLat: 38.53, maxLat: 39.10, minLng: -77.07, maxLng: -76.69)),
     ]
+}
+
+// MARK: - ArcGIS FeatureServer (key-less)
+
+/// Generic provider for an Esri ArcGIS FeatureServer crime layer — free and
+/// key-less. Queries the visible viewport as an `esriGeometryEnvelope` and reads
+/// normalised points from each feature's lat/lng attributes. Adding a city is one
+/// entry in `cities`: the layer query URL, the lat/lng/id/category field names,
+/// and a bounding box.
+private struct ArcGISProvider: CrimeProvider {
+    let name: String
+    /// Full `.../FeatureServer/<n>/query` URL.
+    let queryURL: String
+    let latField: String
+    let lngField: String
+    let idField: String
+    let categoryField: String
+    let idPrefix: String
+    let bounds: MKMapRect
+
+    func fetch(region: MKCoordinateRegion) async -> [CrimePoint] {
+        // Clamp the viewport to our bounds, then ask for that envelope.
+        let bb = bounds
+        let nw = MKMapPoint(x: bb.minX, y: bb.minY).coordinate
+        let se = MKMapPoint(x: bb.maxX, y: bb.maxY).coordinate
+        let minLat = max(region.minLat, min(nw.latitude, se.latitude))
+        let maxLat = min(region.maxLat, max(nw.latitude, se.latitude))
+        let minLng = max(region.minLng, min(nw.longitude, se.longitude))
+        let maxLng = min(region.maxLng, max(nw.longitude, se.longitude))
+        guard minLat < maxLat, minLng < maxLng else { return [] }
+
+        var comps = URLComponents(string: queryURL)!
+        comps.queryItems = [
+            URLQueryItem(name: "where", value: "1=1"),
+            // envelope = xmin,ymin,xmax,ymax in WGS84
+            URLQueryItem(name: "geometry", value: "\(minLng),\(minLat),\(maxLng),\(maxLat)"),
+            URLQueryItem(name: "geometryType", value: "esriGeometryEnvelope"),
+            URLQueryItem(name: "inSR", value: "4326"),
+            URLQueryItem(name: "spatialRel", value: "esriSpatialRelIntersects"),
+            URLQueryItem(name: "outFields", value: "\(idField),\(categoryField),\(latField),\(lngField)"),
+            URLQueryItem(name: "returnGeometry", value: "false"),
+            URLQueryItem(name: "resultRecordCount", value: "600"),
+            URLQueryItem(name: "f", value: "json"),
+        ]
+        guard let url = comps.url,
+              let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let decoded = try? JSONDecoder().decode(ArcGISResponse.self, from: data)
+        else { return [] }
+
+        return decoded.features.compactMap { feature -> CrimePoint? in
+            let a = feature.attributes
+            guard let lat = a[latField]?.double, let lng = a[lngField]?.double else { return nil }
+            let rid = a[idField]?.string ?? "\(lat),\(lng)"
+            let cat = a[categoryField]?.string ?? "crime"
+            return CrimePoint(id: "\(idPrefix)-\(rid)",
+                              coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng),
+                              category: cat)
+        }
+    }
+
+    /// Every wired ArcGIS city. Add a row to support a new one.
+    static let cities: [ArcGISProvider] = [
+        ArcGISProvider(
+            name: "Open Baltimore",
+            queryURL: "https://services1.arcgis.com/UWYHeuuJISiGmgXx/arcgis/rest/services/Part1_Crime_Beta/FeatureServer/0/query",
+            latField: "Latitude", lngField: "Longitude",
+            idField: "RowID", categoryField: "Description", idPrefix: "bmore",
+            bounds: mapRect(minLat: 39.19, maxLat: 39.38, minLng: -76.72, maxLng: -76.52)),
+    ]
+}
+
+/// Minimal ArcGIS `f=json` query response — just the feature attribute bags.
+private struct ArcGISResponse: Decodable {
+    let features: [Feature]
+    struct Feature: Decodable { let attributes: [String: SODAValue] }
 }
 
 /// A Socrata field value, which may arrive as a JSON string or number.

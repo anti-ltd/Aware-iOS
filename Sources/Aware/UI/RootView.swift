@@ -1,10 +1,11 @@
 import SwiftUI
 import iUXiOS
 
-/// The app's top-level tabs. Held in `AppModel` so a screen (e.g. the Routes
-/// search) can jump the user to another tab programmatically.
+/// The app's top-level tabs. Held in `AppModel` so a screen can jump the user to
+/// another tab programmatically. Routing lives on the Map now, so the old Routes
+/// tab is gone and its place is taken by Settings.
 enum AppTab: Hashable {
-    case map, routes, safety, contacts, profile
+    case map, safety, contacts, profile, settings
 }
 
 /// Tab shell. Map-first: the safety map is the home tab and the hub every other
@@ -20,10 +21,6 @@ struct RootView: View {
                 .tabItem { Label("Map", systemImage: "map.fill") }
                 .tag(AppTab.map)
 
-            RoutesView()
-                .tabItem { Label("Routes", systemImage: "point.topleft.down.to.point.bottomright.curvepath.fill") }
-                .tag(AppTab.routes)
-
             SafetyView()
                 .tabItem { Label("Safety", systemImage: "shield.lefthalf.filled") }
                 .tag(AppTab.safety)
@@ -35,6 +32,10 @@ struct RootView: View {
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "cross.case.fill") }
                 .tag(AppTab.profile)
+
+            SettingsView()
+                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+                .tag(AppTab.settings)
         }
         .fullScreenCover(isPresented: .constant(!settings.hasOnboarded)) {
             OnboardingView()
