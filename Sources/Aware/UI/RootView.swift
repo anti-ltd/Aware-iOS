@@ -13,6 +13,8 @@ enum AppTab: Hashable {
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @Environment(AppSettings.self) private var settings
+    @AppStorage("lastSeenBuild") private var lastSeenBuild = ""
+    @State private var showWhatsNew = false
 
     var body: some View {
         @Bindable var model = model
@@ -40,12 +42,31 @@ struct RootView: View {
         .fullScreenCover(isPresented: .constant(!settings.hasOnboarded)) {
             OnboardingView()
         }
+        .fullScreenCover(isPresented: $showWhatsNew) {
+            WhatsNewView {
+                lastSeenBuild = AppBuild.number
+                showWhatsNew = false
+            }
+        }
+        .onAppear {
+            presentWhatsNewIfNeeded()
+        }
         .task {
-            // Returning users: re-assert perms quietly. First-run perms are driven
-            // by the onboarding flow instead, so don't prompt over it.
             guard settings.hasOnboarded else { return }
             model.location.requestWhenInUse()
             NotificationScheduler.requestAuthorization()
         }
+    }
+
+    /// One-shot per build for upgraders only. Fresh installs finish onboarding
+    /// first — we stamp `lastSeenBuild` silently so What's New never fires for them.
+    private func presentWhatsNewIfNeeded() {
+        guard settings.hasOnboarded else { return }
+        if lastSeenBuild.isEmpty {
+            lastSeenBuild = AppBuild.number
+            return
+        }
+        guard ReleaseNotes.shouldPresent(lastSeenBuild: lastSeenBuild) else { return }
+        showWhatsNew = true
     }
 }

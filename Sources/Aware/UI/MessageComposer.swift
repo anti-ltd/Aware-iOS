@@ -10,7 +10,10 @@ import MessageUI
 struct MessageComposer: UIViewControllerRepresentable {
     let recipients: [String]
     let body: String
-    var onFinish: (MessageComposeResult) -> Void = { _ in }
+    /// Called when the sheet finishes (sent, cancelled, or failed). `@MainActor`
+    /// because it clears the presenting sheet; being main-actor-typed also makes
+    /// the closure `Sendable`, so the nonisolated delegate can hold it safely.
+    var onFinish: @MainActor (MessageComposeResult) -> Void = { _ in }
 
     static var canSend: Bool { MFMessageComposeViewController.canSendText() }
 
@@ -27,13 +30,20 @@ struct MessageComposer: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(onFinish: onFinish) }
 
     final class Coordinator: NSObject, MFMessageComposeViewControllerDelegate {
-        let onFinish: (MessageComposeResult) -> Void
-        init(onFinish: @escaping (MessageComposeResult) -> Void) { self.onFinish = onFinish }
+        let onFinish: @MainActor (MessageComposeResult) -> Void
+        init(onFinish: @escaping @MainActor (MessageComposeResult) -> Void) { self.onFinish = onFinish }
 
-        func messageComposeViewController(_ controller: MFMessageComposeViewController,
-                                          didFinishWith result: MessageComposeResult) {
-            controller.dismiss(animated: true)
-            onFinish(result)
+        nonisolated func messageComposeViewController(
+            _ controller: MFMessageComposeViewController,
+            didFinishWith result: MessageComposeResult
+        ) {
+            // Read the Sendable callback out before hopping — capturing `self` or the
+            // (non-Sendable) `controller` into the main-actor closure would race under
+            // Swift 6. No manual dismiss needed: clearing the sheet item collapses the
+            // `.sheet(item:)`, which tears down this controller. MessageUI always calls
+            // this on the main thread, so the isolation assumption holds.
+            let finish = onFinish
+            MainActor.assumeIsolated { finish(result) }
         }
     }
 }

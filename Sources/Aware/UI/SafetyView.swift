@@ -50,8 +50,10 @@ struct SafetyView: View {
                 .glassSheet()
             }
             .sheet(item: $alert) { payload in
-                MessageComposer(recipients: payload.recipients, body: payload.body)
-                    .ignoresSafeArea()
+                MessageComposer(recipients: payload.recipients, body: payload.body) { _ in
+                    alert = nil
+                }
+                .ignoresSafeArea()
             }
             .alert("Can't send alerts", isPresented: $cantSend) {
                 Button("OK", role: .cancel) {}

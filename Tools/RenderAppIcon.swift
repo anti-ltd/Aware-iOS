@@ -48,8 +48,9 @@ func renderPNG(size: CGFloat, mode: String) -> Data? {
 // keeps Core Graphics' native antialiasing. With `knockout: true` the glyph is
 // punched out of what's already drawn (`.destinationOut`) so the field/wallpaper
 // shows through the shape.
-func drawSymbol(_ name: String, box: CGFloat, center: CGPoint, fill: NSColor, knockout: Bool = false) {
-    let cfg = NSImage.SymbolConfiguration(pointSize: box, weight: .medium)
+func drawSymbol(_ name: String, box: CGFloat, center: CGPoint, fill: NSColor, knockout: Bool = false,
+                weight: NSFont.Weight = .medium) {
+    let cfg = NSImage.SymbolConfiguration(pointSize: box, weight: weight)
     guard let sym = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
         .withSymbolConfiguration(cfg) else { return }
     let s = sym.size
@@ -71,8 +72,9 @@ func drawSymbol(_ name: String, box: CGFloat, center: CGPoint, fill: NSColor, kn
 // are composited `.sourceAtop` inside an offscreen the shape of the symbol, so
 // both stay clipped to the glyph with no stray edges.
 func drawSymbolGradient(_ name: String, box: CGFloat, center: CGPoint,
-                        fillStops: [(NSColor, CGFloat)], sheenTopAlpha: CGFloat) {
-    let cfg = NSImage.SymbolConfiguration(pointSize: box, weight: .medium)
+                        fillStops: [(NSColor, CGFloat)], sheenTopAlpha: CGFloat,
+                        weight: NSFont.Weight = .medium) {
+    let cfg = NSImage.SymbolConfiguration(pointSize: box, weight: weight)
     guard let sym = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
         .withSymbolConfiguration(cfg) else { return }
     let s = sym.size
@@ -104,6 +106,39 @@ func draw(in cg: CGContext, size: CGFloat, mode: String) {
     func grad(_ stops: [(CGColor, CGFloat)]) -> CGGradient {
         CGGradient(colorsSpace: space, colors: stops.map { $0.0 } as CFArray,
                    locations: stops.map { $0.1 })!
+    }
+
+    // ── Dark mode: a flat icon to sit beside the flat single-glyph system marks
+    //    (Apple, Rev) on a dark home screen — teal shield on a near-black tile,
+    //    no disc, no teal field. Light/tinted keep the glossy 3D puck. ─────────
+    if isDark {
+        cg.drawLinearGradient(grad([(rgb(0.10, 0.105, 0.12), 0), (rgb(0.05, 0.052, 0.062), 0.55), (rgb(0.025, 0.026, 0.032), 1)]),
+                              start: CGPoint(x: 0, y: size), end: CGPoint(x: 0, y: 0),
+                              options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
+        let bloomC = CGPoint(x: size * 0.5, y: size * 0.7)
+        cg.drawRadialGradient(grad([(rgb(0.45, 0.5, 0.7, 0.07), 0), (rgb(0.45, 0.5, 0.7, 0.0), 1)]),
+                              startCenter: bloomC, startRadius: 0, endCenter: bloomC, endRadius: size * 0.6, options: [])
+        let box = size * 0.46
+        let c = CGPoint(x: size * 0.5, y: size * 0.5)
+        // Bevel: dark drop-shadow below lifts the glyph off the tile (cf. Rev's R).
+        cg.saveGState()
+        cg.setShadow(offset: CGSize(width: 0, height: -size * 0.012), blur: size * 0.03, color: rgb(0, 0, 0, 0.7))
+        drawSymbol("shield.fill", box: box, center: c, fill: NSColor(srgbRed: 0.10, green: 0.48, blue: 0.44, alpha: 1), weight: .semibold)
+        cg.restoreGState()
+        // Emboss: a dark copy nudged down then a warm-gold copy nudged up, both
+        // behind the main fill, so a lit top edge and a shaded bottom edge peek out
+        // and the mark reads carved into the tile. Gold (not white/cyan) keeps it warm.
+        drawSymbol("shield.fill", box: box, center: CGPoint(x: c.x, y: c.y - size * 0.007),
+                   fill: NSColor(srgbRed: 0.06, green: 0.14, blue: 0.12, alpha: 0.9), weight: .semibold)
+        drawSymbol("shield.fill", box: box, center: CGPoint(x: c.x, y: c.y + size * 0.006),
+                   fill: NSColor(srgbRed: 1.0, green: 0.93, blue: 0.62, alpha: 1.0), weight: .semibold)
+        // Teal gradient + glossy top sheen; bottom stop stays bright (not muddy).
+        drawSymbolGradient("shield.fill", box: box, center: c,
+            fillStops: [(NSColor(srgbRed: 0.62, green: 1.00, blue: 0.95, alpha: 1), 0),
+                        (NSColor(srgbRed: 0.20, green: 0.88, blue: 0.82, alpha: 1), 0.5),
+                        (NSColor(srgbRed: 0.08, green: 0.72, blue: 0.70, alpha: 1), 1)],
+            sheenTopAlpha: 0.28, weight: .semibold)
+        return
     }
 
     // ── The calm teal field — painted as the background, and again through the

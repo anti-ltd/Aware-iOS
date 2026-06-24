@@ -35,7 +35,7 @@ EXPORT_DIR     := $(BUILD_DIR)/export
 IPA            := $(EXPORT_DIR)/$(APP_NAME).ipa
 EXPORT_OPTIONS := ExportOptions.plist
 
-.PHONY: all project icon changelog build run sim install clean stop help test \
+.PHONY: all project icon changelog roadmap build run sim install clean stop help test \
         device device-install device-launch build-device \
         archive package validate-asc upload-asc bump
 
@@ -46,6 +46,7 @@ help:
 	@echo "  make project — regenerate $(PROJECT) from project.yml (needs xcodegen)"
 	@echo "  make icon    — render the app icon PNGs into Assets.xcassets"
 	@echo "  make changelog — bake CHANGELOG.md into the in-app changelog"
+	@echo "  make roadmap   — bake ROADMAP.md into Settings → Roadmap"
 	@echo "  make build   — xcodebuild for the iOS simulator"
 	@echo "  make run     — boot the sim, install, launch Aware"
 	@echo "  make stop    — terminate the running sim instance"
@@ -90,6 +91,17 @@ $(CHANGELOG_OUT): $(CHANGELOG_SRC) $(CHANGELOG_GEN)
 
 changelog: $(CHANGELOG_OUT)
 
+ROADMAP_SRC := ROADMAP.md
+ROADMAP_GEN := Tools/GenerateRoadmap.swift
+ROADMAP_OUT := Sources/Aware/Roadmap.generated.swift
+
+$(ROADMAP_OUT): $(ROADMAP_SRC) $(ROADMAP_GEN)
+	swift Tools/GenerateRoadmap.swift
+
+roadmap: $(ROADMAP_OUT)
+
+DOCS_OUT := $(CHANGELOG_OUT) $(ROADMAP_OUT)
+
 # Regenerate the xcodeproj from project.yml. XcodeGen is the source of truth.
 project:
 	@command -v xcodegen >/dev/null 2>&1 || { \
@@ -99,7 +111,7 @@ project:
 	@echo "Generated $(PROJECT)"
 
 # Build for the iOS simulator. Generates the project on first run.
-build: $(PROJECT) $(ICON_OUT) $(CHANGELOG_OUT)
+build: $(PROJECT) $(ICON_OUT) $(DOCS_OUT)
 	@mkdir -p $(BUILD_DIR)
 	xcodebuild \
 		-project $(PROJECT) \
@@ -160,7 +172,7 @@ DEVICE_UDID = $(shell \
 				}'; \
 	fi)
 
-build-device: $(PROJECT) $(ICON_OUT) $(CHANGELOG_OUT)
+build-device: $(PROJECT) $(ICON_OUT) $(DOCS_OUT)
 	@mkdir -p $(BUILD_DIR)
 	xcodebuild \
 		-project $(PROJECT) \
@@ -212,7 +224,7 @@ device-launch:
 #   make validate-asc — dry-run the upload (catches most rejections, uploads nothing)
 #   make upload-asc    — archive + package + validate + upload to App Store Connect
 # ============================================================
-archive: project $(ICON_OUT) $(CHANGELOG_OUT)
+archive: project $(ICON_OUT) $(DOCS_OUT)
 	@mkdir -p $(BUILD_DIR)
 	rm -rf $(ARCHIVE)
 	xcodebuild \

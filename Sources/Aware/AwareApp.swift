@@ -14,6 +14,7 @@ struct AwareApp: App {
                 .environment(settings)
                 .environment(planner)
                 .tint(.accentColor)
+                .task { await TrackingCatalogStore.refreshIfNeeded() }
         }
     }
 }
