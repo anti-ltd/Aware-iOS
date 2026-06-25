@@ -37,6 +37,9 @@ Icon
 *.swp
 *.swo
 
+# API keys for anti.ltd tracking relay
+Secrets.xcconfig
+
 # App-specific
 *.ipa
 *.app

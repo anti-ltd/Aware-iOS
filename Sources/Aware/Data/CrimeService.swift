@@ -93,7 +93,7 @@ private extension CrimeService {
             .init(name: "e", value: String(region.maxLng)),
         ]
         guard let url = TrackingAPI.url(path: "crime/points", query: query) else { return ([], nil) }
-        var req = URLRequest(url: url)
+        var req = TrackingAPI.authenticatedRequest(url: url)
         req.timeoutInterval = 20
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               (resp as? HTTPURLResponse)?.statusCode == 200,
@@ -136,5 +136,6 @@ private extension CrimeService {
         .init(minLat: 47.49, maxLat: 47.73, minLng: -122.44, maxLng: -122.24), // Seattle
         .init(minLat: 38.79, maxLat: 38.99, minLng: -77.12, maxLng: -76.91), // Washington DC
         .init(minLat: 39.87, maxLat: 40.14, minLng: -75.28, maxLng: -74.95), // Philadelphia
+        .init(minLat: 43.58, maxLat: 43.85, minLng: -79.64, maxLng: -79.11), // Toronto
     ]
 }

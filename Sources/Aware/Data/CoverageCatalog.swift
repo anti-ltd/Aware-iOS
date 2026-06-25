@@ -12,7 +12,7 @@ enum CrimeCoverage {
     static let symbol = "shield.fill"
     static let tint = Color.orange
     static let bundledSummary =
-        "Open police data for the UK and a handful of US cities and counties."
+        "Open police data for the UK, US metros, and international cities with street-level feeds."
 
     static let worldRegion = MKCoordinateRegion(
         center: CLLocationCoordinate2D(latitude: 20, longitude: 10),
@@ -35,6 +35,10 @@ enum CoverageCatalog {
             return remote
         }
         return CrimeCoverage.bundledSummary
+    }
+
+    static func regionGroups() async -> [TrackingCatalogStore.CoverageLayerPayload.CountryGroup] {
+        await TrackingCatalogStore.coverageLayer(CrimeCoverage.layerId)?.regionGroups ?? []
     }
 
     static func regions() async -> [CoverageRegion] {

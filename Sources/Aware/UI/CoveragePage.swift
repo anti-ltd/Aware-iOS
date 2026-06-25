@@ -9,11 +9,18 @@ struct CoveragePage: View {
     @State private var camera: MapCameraPosition = .region(CrimeCoverage.worldRegion)
     @State private var dockExpanded = false
     @State private var regions: [CoverageRegion] = []
+    @State private var regionGroups: [TrackingCatalogStore.CoverageLayerPayload.CountryGroup] = []
     @State private var layerSummary = CrimeCoverage.bundledSummary
 
     private var accent: Color { CrimeCoverage.tint }
     private var sortedRegions: [CoverageRegion] {
         regions.sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+    }
+
+    private var groupedRegionCount: Int {
+        regionGroups.reduce(0) { total, country in
+            total + country.regions.count + (country.adminAreas?.reduce(0) { $0 + $1.regions.count } ?? 0)
+        }
     }
 
     var body: some View {
@@ -133,7 +140,16 @@ struct CoveragePage: View {
 
     @ViewBuilder
     private var regionList: some View {
-        if regionListNeedsScroll {
+        if !regionGroups.isEmpty {
+            if regionListNeedsScroll {
+                ScrollView(showsIndicators: false) {
+                    groupedRegionList
+                }
+                .frame(maxHeight: 260)
+            } else {
+                groupedRegionList
+            }
+        } else if regionListNeedsScroll {
             ScrollView(showsIndicators: false) {
                 regionGrid
             }
@@ -144,7 +160,58 @@ struct CoveragePage: View {
     }
 
     private var regionListNeedsScroll: Bool {
-        sortedRegions.count > 12
+        if !regionGroups.isEmpty { return groupedRegionCount > 10 }
+        return sortedRegions.count > 12
+    }
+
+    private var groupedRegionList: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ForEach(regionGroups) { country in
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(country.label)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(accent)
+                    if !country.regions.isEmpty {
+                        regionRefGrid(country.regions)
+                    }
+                    ForEach(country.adminAreas ?? []) { admin in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(admin.label)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 2)
+                            regionRefGrid(admin.regions)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func regionRefGrid(_ refs: [TrackingCatalogStore.CoverageLayerPayload.RegionRef]) -> some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 148), spacing: 8, alignment: .leading)],
+            alignment: .leading,
+            spacing: 8
+        ) {
+            ForEach(refs) { ref in
+                regionRefRow(ref)
+            }
+        }
+    }
+
+    private func regionRefRow(_ ref: TrackingCatalogStore.CoverageLayerPayload.RegionRef) -> some View {
+        HStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(accent.opacity(0.55))
+                .frame(width: 10, height: 10)
+            Text(ref.label)
+                .font(.caption)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var regionGrid: some View {
@@ -176,6 +243,7 @@ struct CoveragePage: View {
     private func loadCoverage() async {
         await CoverageCatalog.prepare()
         regions = await CoverageCatalog.regions()
+        regionGroups = await CoverageCatalog.regionGroups()
         layerSummary = await CoverageCatalog.summary()
     }
 }

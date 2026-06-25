@@ -8,6 +8,11 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(AppSettings.self) private var settings
     @State private var showWhatsNew = false
+    @State private var statusSubtitle = "Loading…"
+
+    private func refreshStatusSubtitle() async {
+        statusSubtitle = (await ServiceStatusCatalog.load()).summaryLine
+    }
 
     var body: some View {
         @Bindable var settings = settings
@@ -25,6 +30,12 @@ struct SettingsView: View {
                                subtitle: "Open-data sources behind the map",
                                systemImage: "character.book.closed.fill", glyphTint: .purple) {
                             SourcesPage()
+                        }
+                        Divider()
+                        NavRow("Service status",
+                               subtitle: statusSubtitle,
+                               systemImage: "checklist.checked", glyphTint: .green) {
+                            StatusPage()
                         }
                         Divider()
                         NavRow("Coverage",
@@ -109,6 +120,7 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .ambientBackground(tint: .accentColor)
             .navigationTitle("Settings")
+            .task { await refreshStatusSubtitle() }
             .fullScreenCover(isPresented: $showWhatsNew) {
                 WhatsNewView { showWhatsNew = false }
             }

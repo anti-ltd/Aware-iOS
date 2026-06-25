@@ -12,6 +12,25 @@ All notable changes to Aware are recorded here. The format follows
 into the app at build time (`make changelog`) and shown under
 Settings → Changelog.
 
+## [Unreleased]
+
+### Added
+
+- **More crime cities.** Seattle, Washington DC, Philadelphia, and Toronto join the
+  heatmap alongside the existing UK and US feeds.
+- **Live anti.ltd sync.** Crime sources, coverage footprints, and service status sync
+  from anti.ltd and stay cached on your phone. New cities can land without waiting
+  for an app update.
+
+### Changed
+
+- **World view on open.** The safety map starts zoomed out so you can see where
+  crime data exists, then pan or recenter on yourself.
+- **Coverage by region.** Settings → Coverage groups cities by country and state
+  so the list stays readable as we add more areas.
+- **Sources from the server.** Settings → Sources lists crime feeds from the
+  anti.ltd catalog when online, with a bundled fallback offline.
+
 ## [1.0] (B4) - 2026-06-24
 
 Settings info docs, coverage map, and What's New, aligned with Spot.

@@ -25,8 +25,6 @@ struct SafetyMapView: View {
     /// Imperative camera moves (recenter, frame a route) + their monotonic id.
     @State private var mapCommand: MapCommand?
     @State private var commandSeq = 0
-    /// Whether the initial recenter-on-user has happened yet.
-    @State private var didCenter = false
     /// Tapped-area crime detail (drives the insights sheet).
     @State private var insight: AreaInsight?
 
@@ -60,13 +58,6 @@ struct SafetyMapView: View {
                 } else {
                     heatImage = nil
                 }
-            }
-            // Recenter on the user the first time we get a location fix.
-            .onChange(of: model.location.location?.coordinate.latitude) { _, _ in
-                guard !didCenter, let loc = model.location.location?.coordinate else { return }
-                didCenter = true
-                moveCamera(to: MKCoordinateRegion(center: loc,
-                    latitudinalMeters: 1_500, longitudinalMeters: 1_500))
             }
             .overlay(alignment: .top) {
                 if search.isSearching || crime.isLoading {

@@ -1,0 +1,34 @@
+---
+description: Voice and tone for all user-facing text (UI, alerts, errors, onboarding)
+alwaysApply: true
+---
+
+# User-facing copy
+
+Any text a user reads in the app must follow the same voice as our changelog. That includes UI labels, buttons, alerts, error messages, empty states, onboarding, settings, push notifications, and What's New copy.
+
+## Voice (write like a human, not a model)
+
+Keep it direct and readable.
+
+- **Short sentences.** Say what happened and what to do next. Don't pad with setup clauses or recap the whole subsystem.
+- **Plain words.** "Fixed" not "corrected to ensure"; "uses" not "is now wired into".
+- **No em dashes (—).** Use commas, periods, or parentheses instead. They read as AI filler when stacked everywhere.
+- **No stacked asides.** One parenthetical per sentence is enough.
+- **Match the project tone.** Casual where it fits ("pile of fixes", "spazzes the camera") is fine; stiff product-copy voice is not.
+- **Trim error and bug copy hardest.** State the symptom, one line of cause if needed, what to do. Done.
+
+Read it aloud. If it sounds like marketing copy or a technical blog post, shorten it.
+
+## Examples
+
+| Avoid | Prefer |
+|-------|--------|
+| "We were unable to complete your request at this time." | "Couldn't save. Try again." |
+| "Your location has been successfully updated." | "Location updated." |
+| "An error occurred — please check your connection and try again." | "No connection. Check Wi‑Fi and try again." |
+
+## When editing
+
+- New or changed user-visible strings need a matching `CHANGELOG.md` bullet under `[Unreleased]` (see changelog rule).
+- Prefer existing phrasing in nearby screens over inventing new patterns.

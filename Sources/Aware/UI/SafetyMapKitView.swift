@@ -37,11 +37,7 @@ struct SafetyMapKitView: UIViewRepresentable {
         map.showsCompass = true
         map.pointOfInterestFilter = .excludingAll
         map.mapType = .standard
-        // Seed a modest region so the first load isn't a world-wide POI search;
-        // `SafetyMapView` recenters on the user the moment a fix arrives.
-        map.setRegion(MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: 51.5074, longitude: -0.1278),
-            latitudinalMeters: 4_000, longitudinalMeters: 4_000), animated: false)
+        map.setRegion(CrimeCoverage.worldRegion, animated: false)
         context.coordinator.map = map
 
         let press = UILongPressGestureRecognizer(target: context.coordinator,

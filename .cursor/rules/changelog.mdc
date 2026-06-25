@@ -1,0 +1,86 @@
+---
+description: Keep CHANGELOG.md and ROADMAP.md updated with every user-facing change
+alwaysApply: true
+---
+
+# Changelog is mandatory
+
+**Always keep `CHANGELOG.md` up to date.** Any user-facing change (features, fixes, UI copy, behavior changes, removals) needs a bullet under `[Unreleased]` in the same PR/session as the code change. Do not ship or consider work complete without it.
+
+**Keep `ROADMAP.md` in sync when the change affects what users can do today.** Changelog is per-build deltas; the roadmap is the living "what Aware ships" doc (Settings → Roadmap). Update both in the same session when a feature lands, a layer moves from Coming soon to Live now, or existing copy no longer matches the app.
+
+## Format
+
+Follow [Keep a Changelog](https://keepachangelog.com/): `### Added`, `### Changed`, `### Fixed` under `## [Unreleased]`.
+
+Each bullet: **bold headline.** One plain-language sentence of what changed and why it matters to the user. No code refs, file names, view/class names, or implementation detail. Users read this in What's New and Settings → Changelog.
+
+`[Unreleased]` only needs `###` sections and bullets. Bump auto-writes the What's New intro from the bullet headlines if you skip one:
+
+```markdown
+## [Unreleased]
+
+### Changed
+- **Headline.** What changed.
+```
+
+## Voice (write like a human, not a model)
+
+Changelog copy is user-facing. Keep it direct and readable.
+
+- **Short sentences.** Say what changed and why it matters; don't pad with setup clauses or recap the whole subsystem.
+- **Plain words.** "Fixed" not "corrected to ensure"; "uses" not "is now wired into".
+- **No em dashes (—).** Use commas, periods, or parentheses instead. They read as AI filler when stacked in every bullet.
+- **No stacked asides.** One parenthetical or code-ref tail per bullet is enough.
+- **Match the project tone.** Casual where it fits ("pile of fixes", "spazzes the camera") is fine; stiff release-notes voice is not.
+- **Trim Fixed bullets hardest.** Bug entries tend to balloon into mini post-mortems. State the symptom, the cause in one line if needed, the fix. Done.
+- **No implementation detail.** No view names, class names, file paths, or API symbols. Describe what the user sees and does.
+
+Read a bullet aloud. If it sounds like marketing copy or a technical blog post, shorten it.
+
+## Per-build workflow
+
+- **While developing:** add bullets to `## [Unreleased]`
+- **Before upload:** hit **Bump** or **Bump + Upload** in ASCManager (or `make bump`). `Tools/BumpRelease.swift` promotes `[Unreleased]` to `## [1.0.0] (B{n}) - YYYY-MM-DD`, auto-writes the What's New intro from bullet headlines, clears `[Unreleased]`, increments `CFBundleVersion`, and bakes `Changelog.generated.swift`
+- **After manual edits:** run `make changelog` (or any `make build*`) to rebake `Changelog.generated.swift`
+- **After roadmap edits:** run `make roadmap` (or any `make build*`) to rebake `Roadmap.generated.swift`
+
+`(B{n})` must match `CFBundleVersion` in `project.yml`. The in-app **What's New** flow and **Settings → Changelog** both read from `CHANGELOG.md`. **Settings → Roadmap** reads from `ROADMAP.md`.
+
+## When to update
+
+| Change | Section |
+|--------|---------|
+| New feature or screen | Added |
+| Behavior / UX change to existing features | Changed |
+| Bug in existing behavior | Fixed |
+| Removed or disabled feature | Changed (or Removed if we add that section) |
+
+**Ship new work under Added.** First release of a feature (and its launch polish) belongs in **Added**, not **Changed** or **Fixed**. Don't file "new ISS toggles" under Fixed or "shareable badge cards" under Changed just because you also fixed a bug while building it. Fold launch-time fixes and visual polish into the Added bullet, or add a short Fixed bullet only when it's a distinct bug a user would notice separately.
+
+**Fixed is for regressions and broken existing behavior.** Bugs found while building a brand-new feature are part of that feature's Added entry unless they're clearly unrelated.
+
+Skip changelog only for pure refactors, comments, or tooling with zero user impact.
+
+**Skip changelog for copy/voice polish.** Tweaks that only fix stiff or AI-sounding wording (em dashes, "in your location", marketing filler) do not get a bullet. The user already gets the better text; a changelog entry that says you removed an em dash or de-AI'd a string is its own tell. If the copy change ships with a real feature or fix, fold it into that bullet or stay silent.
+
+## Roadmap (`ROADMAP.md`)
+
+Same voice as changelog: plain language, what the user gets, no file names or implementation detail. Tables and `###` subsections parse into the in-app timeline; keep that structure.
+
+### When to update
+
+| Change | Roadmap |
+|--------|---------|
+| New feature, screen, layer, or alert type users can use | Yes. Add under the right section; move Coming soon → Live now when it ships. |
+| UX that changes what a feature does or where it lives | Yes if the "what you get" table or bullets would mislead without an edit. |
+| Bug fix or visual polish on something already documented | Usually no. Changelog only. |
+| Dev-only surfaces (Next build teaser, banner preview) | No. |
+| Removed or held-back feature | Yes. Drop from Live now or move back to Coming soon; refresh **Summary**. |
+
+### Checklist
+
+- New capability: bullet or table row in the matching section (Map, Safety, Contacts, etc.).
+- Shipped layer: remove from **Coming soon**, add to **Live now**.
+- **Summary** at the bottom still matches the headline list of what Aware ships today.
+- Run `make roadmap` after editing (same habit as `make changelog`).
